@@ -4,7 +4,9 @@ from models import SimpleNet, SimpleDensityNet
 from sklearn.model_selection import KFold
 import matplotlib.pyplot as plt
 import os
-from utils import mse_loss, nll_loss
+from utils import mse_loss, nll_loss, nll_laplace_loss, lrp_vgg16_simple
+from datasets import *
+
 
 
 class TrainSimple:
@@ -12,11 +14,12 @@ class TrainSimple:
         self,
         train_loader,
         test_loader,
-        n_epochs=400,
+        n_epochs= 400,
         lr=0.01,
         n_hidden_neurons=50,
         device = None,
-        verbose = True
+        verbose = True,
+        save_dir = None
     ):
         
         inputs, _ = next(iter(train_loader))
@@ -33,6 +36,7 @@ class TrainSimple:
         self.n_epochs = n_epochs
         self.lr = lr
         self.verbose = verbose
+        self.save_dir =save_dir
         
 
     def train(self):
@@ -55,6 +59,9 @@ class TrainSimple:
             train_loss /= inputs_len
             if self.verbose:
                 print(f"Epoch {epoch_n} loss: {train_loss}")
+        
+        if self.save_dir:
+            torch.save(self.model.state_dict(), os.path.join(self.save_dir, "model"))
 
         return train_loss
 
@@ -87,7 +94,8 @@ class TrainSimpleDensity:
         lr=0.01,
         n_hidden_neurons=50,
         device = None,
-        verbose = True
+        verbose = True,
+        save_dir = None
     ):
         if not device:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -103,6 +111,7 @@ class TrainSimpleDensity:
         self.n_epochs = n_epochs
         self.lr = lr
         self.verbose = verbose
+        self.save_dir = save_dir
         
 
     def train(self):
@@ -125,6 +134,9 @@ class TrainSimpleDensity:
             train_loss /= inputs_len
             if self.verbose:
                 print(f"Epoch {epoch_n} loss: {train_loss}")
+
+        if self.save_dir:
+            torch.save(self.model.state_dict(), os.path.join(self.save_dir, "model"))
 
 
         return train_loss
@@ -170,7 +182,8 @@ class TrainEnsemble:
         lr=0.01,
         n_hidden_neurons=50,
         device = None,
-        verbose = True
+        verbose = True,
+        save_dir = None
     ):
         
         if not device:
@@ -189,6 +202,7 @@ class TrainEnsemble:
         self.n_epochs = n_epochs
         self.lr = lr
         self.verbose = verbose
+        self.save_dir = save_dir
 
     def train(self):
         optimizers = [
@@ -217,6 +231,10 @@ class TrainEnsemble:
             train_loss /= inputs_len
             if self.verbose:
                 print(f"Epoch {epoch_n} loss: {train_loss}")
+
+        if self.save_dir:
+            for i, model in enumerate(self.models):
+                torch.save(model.state_dict(), os.path.join(self.save_dir, f"model_{i}.pt" ))
 
         return train_loss
         
@@ -266,7 +284,8 @@ class TrainEnsembleDensity:
         lr=0.01,
         n_hidden_neurons=50,
         device = None,
-        verbose = True
+        verbose = True,
+        save_dir = None
     ):
         
         if not device:
@@ -285,6 +304,7 @@ class TrainEnsembleDensity:
         self.n_epochs = n_epochs
         self.lr = lr
         self.verbose = verbose
+        self.save_dir = save_dir
 
 
     def train(self):
@@ -314,6 +334,11 @@ class TrainEnsembleDensity:
             train_loss /= inputs_len
             if self.verbose:
                 print(f"Epoch {epoch_n} loss: {train_loss}")
+
+
+        if self.save_dir:
+            for i, model in enumerate(self.models):
+                torch.save(model.state_dict(), os.path.join(self.save_dir, f"model_{i}.pt" ))
         return train_loss
     
 
@@ -366,7 +391,8 @@ class TrainMCdropout:
         lr=0.01,
         n_hidden_neurons=50,
         device = None,
-        verbose = True
+        verbose = True,
+        save_dir = None
     ):
         
         if not device:
@@ -386,6 +412,7 @@ class TrainMCdropout:
                         n_features, n_hidden_neurons, dropout=dropout
                     ).to(self.device)
         self.verbose = verbose
+        self.save_dir = save_dir
         
 
     def train(self):
@@ -409,6 +436,9 @@ class TrainMCdropout:
             train_loss /= inputs_len
             if self.verbose:
                 print(f"Epoch {epoch_n} loss: {train_loss}")
+
+        if self.save_dir:
+            torch.save(self.model.state_dict(), os.path.join(self.save_dir, "model"))
 
         return train_loss
     
@@ -443,16 +473,174 @@ class TrainMCdropout:
             print(f"Test loss nll : {test_loss_2}")
 
         return test_loss, test_loss_2
+
+
+
     
                     
 
+class TrainSimpleUTK():
+    def __init__(self, batch_size = 128, n_epochs = 10, lr =  1e-4,
+                  save_path = "model_dirs_face/train_ensemble/model_0.pt", verbose = True):
+        self.batch_size = batch_size
+        self.n_epochs = n_epochs
+        self.lr = lr
+        self.save_path = save_path
+        self.verbose = verbose
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = vgg16SimpleNet()
+        self.model.to(self.device)
+        data_transforms = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+        dataset = UTKFaceDataset(transform=data_transforms)
+        self.dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle = True, num_workers=10)
+    
+    
+    def train(self):
+        self.model.train()
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)
 
-
-
-                
-                
-            
         
+        for epoch_n in range(1, self.n_epochs + 1):
+            train_loss = 0.0 
+            inputs_len = 0
+            for i, data in enumerate(self.dataloader):
+                inputs, targets = data
+                inputs = inputs.to(self.device)
+                targets = targets.to(self.device)
+                optimizer.zero_grad()
+                outputs = self.model(inputs)
+                loss = mse_loss(targets, outputs)
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item() * inputs.size(0)
+                inputs_len += inputs.size(0)
+                if self.verbose:
+                    if i % 10 == 0:
+                        print(f"Epoch {epoch_n} Step: {i} loss: {train_loss/inputs_len}")
+            if self.verbose:
+                print(f"Epoch {epoch_n} loss: {train_loss/inputs_len}")
+
+            scheduler.step()
+        
+        if self.save_path:
+            torch.save(self.model.state_dict(), self.save_path)
+
+        return train_loss
+    
+
+
+class TrainDensityUTK():
+    def __init__(self, batch_size = 128, n_epochs = 10, lr =  1e-4,
+                  save_path = "model_dirs_face/train_ensemble_density/model_0.pt", verbose = True):
+        self.batch_size = batch_size
+        self.n_epochs = n_epochs
+        self.lr = lr
+        self.save_path = save_path
+        self.verbose = verbose
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = vgg16DensityNet()
+        self.model.to(self.device)
+        data_transforms = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
+        dataset = UTKFaceDataset(transform=data_transforms)
+        self.dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle = True, num_workers=10)
+    
+    
+    def train(self):
+        self.model.train()
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.9)
+        
+        for epoch_n in range(1, self.n_epochs + 1):
+            train_loss = 0.0 
+            inputs_len = 0
+            for i, data in enumerate(self.dataloader):
+                inputs, targets = data
+                inputs = inputs.to(self.device)
+                targets = targets.to(self.device)
+                optimizer.zero_grad()
+                mu, var = self.model(inputs)
+                loss = nll_loss(targets, (mu,var))
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item() * inputs.size(0)
+                inputs_len += inputs.size(0)
+                if self.verbose:
+                    if i % 10 == 0:
+                        print(f"Epoch {epoch_n} Step: {i} loss: {train_loss/inputs_len}")
+            if self.verbose:
+                print(f"Epoch {epoch_n} loss: {train_loss/inputs_len}")
+
+            scheduler.step()
+
+        if self.save_path:
+            torch.save(self.model.state_dict(), self.save_path)
+
+        return train_loss
+
+def main():
+
+
+    # for i in range(10):
+    #     t = TrainSimpleUTK(save_path = f"model_dirs_face/train_ensemble/model_{i}.pt")
+    #     t.train()
+
+    # for i in range(2, 10):
+    #     t = TrainDensityUTK(save_path = f"model_dirs_face/train_ensemble_density/model_{i}.pt")          
+    #     t.train()
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model_simple = vgg16SimpleNet()
+    model_simple.load_state_dict(torch.load("model_dirs_face/train_ensemble/model_0.pt"))
+    model_simple.eval()
+    model_simple.to(device)
+
+    model_density = vgg16DensityNet()
+    model_density.load_state_dict(torch.load("model_dirs_face/train_ensemble_density/model_0.pt"))
+    model_density.eval()
+    model_density.to(device)
+
+    
+    data_transforms = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+
+    dataset = UTKFaceDataset(transform= None)
+    for i in range(20,30):
+        age = model_simple(data_transforms(dataset[i][0]).unsqueeze(0).to(device)).item()
+        plt.imshow(dataset[i][0])
+        plt.figtext(0.5, 0.01, f"Age: {age}", wrap=True, horizontalalignment='center', fontsize=12)
+        plt.show()
+        lrp_vgg16_simple(model_simple, data_transforms(dataset[i][0]).unsqueeze(0).to(device))
+
+    # with torch.no_grad():
+    #     for data in dataset:
+    #         input, target = data
+    #         input_tr = data_transforms(input).unsqueeze(0)
+    #         input_tr = input_tr.to(device)
+    #         target = target.to(device)
+    #         output = model_simple(input_tr)
+    #         mu, var = model_density(input_tr)
+    #         input.save(f"ex/{mu.item():.2f}_{var.item():.2f}_{output.item():.2f}.png")
+          
+
+
+
+                
+
+if __name__ == '__main__':
+    main()
+
 
 
 
