@@ -1,0 +1,139 @@
+boston
+      CRIM    ZN  INDUS  CHAS    NOX     RM   AGE     DIS  RAD    TAX  PTRATIO       B  LSTAT  MEDV
+0  0.00632  18.0   2.31     0  0.538  6.575  65.2  4.0900    1  296.0     15.3  396.90   4.98  24.0
+1  0.02731   0.0   7.07     0  0.469  6.421  78.9  4.9671    2  242.0     17.8  396.90   9.14  21.6
+2  0.02729   0.0   7.07     0  0.469  7.185  61.1  4.9671    2  242.0     17.8  392.83   4.03  34.7
+3  0.03237   0.0   2.18     0  0.458  6.998  45.8  6.0622    3  222.0     18.7  394.63   2.94  33.4
+4  0.06905   0.0   2.18     0  0.458  7.147  54.2  6.0622    3  222.0     18.7  396.90   5.33  36.2
+CovLRP - diag
+4.34182071685791
+CovLRP - marg
+4.349229335784912
+CovGI - diag
+1.6101272106170654
+CovGI - marg
+1.906316876411438
+LRP
+0.9512836337089539
+GI
+1.1208913326263428
+concrete
+   Cement  Blast Furnace Slag  Fly Ash  Water  Superplasticizer  Coarse Aggregate  Fine Aggregate  Age  Strength
+0   540.0                 0.0      0.0  162.0               2.5            1040.0           676.0   28     79.99
+1   540.0                 0.0      0.0  162.0               2.5            1055.0           676.0   28     61.89
+2   332.5               142.5      0.0  228.0               0.0             932.0           594.0  270     40.27
+3   332.5               142.5      0.0  228.0               0.0             932.0           594.0  365     41.05
+4   198.6               132.4      0.0  192.0               0.0             978.4           825.5  360     44.30
+CovLRP - diag
+4.930845737457275
+CovLRP - marg
+4.994769096374512
+CovGI - diag
+4.432708740234375
+CovGI - marg
+4.902266025543213
+LRP
+2.106553077697754
+GI
+4.86958646774292
+energy
+   Relative Compactness  Surface Area  Wall Area  Roof Area  ...  Glazing Area  Glazing Area Distribution  Heating Load  Cooling Load
+0                  0.98         514.5      294.0     110.25  ...           0.0                          0         15.55         21.33
+1                  0.98         514.5      294.0     110.25  ...           0.0                          0         15.55         21.33
+2                  0.98         514.5      294.0     110.25  ...           0.0                          0         15.55         21.33
+3                  0.98         514.5      294.0     110.25  ...           0.0                          0         15.55         21.33
+4                  0.90         563.5      318.5     122.50  ...           0.0                          0         20.84         28.28
+
+[5 rows x 10 columns]
+CovLRP - diag
+3.9969723224639893
+CovLRP - marg
+3.565086603164673
+CovGI - diag
+2.9063894748687744
+CovGI - marg
+3.748969316482544
+LRP
+0.5115609765052795
+GI
+0.9124415516853333
+wine
+   fixed acidity  volatile acidity  citric acid  residual sugar  chlorides  ...  density    pH  sulphates  alcohol  quality
+0            7.4              0.70         0.00             1.9      0.076  ...   0.9978  3.51       0.56      9.4        5       
+1            7.8              0.88         0.00             2.6      0.098  ...   0.9968  3.20       0.68      9.8        5       
+2            7.8              0.76         0.04             2.3      0.092  ...   0.9970  3.26       0.65      9.8        5       
+3           11.2              0.28         0.56             1.9      0.075  ...   0.9980  3.16       0.58      9.8        6       
+4            7.4              0.70         0.00             1.9      0.076  ...   0.9978  3.51       0.56      9.4        5       
+
+[5 rows x 12 columns]
+CovLRP - diag
+0.9001610279083252
+CovLRP - marg
+0.8813285827636719
+CovGI - diag
+0.07452879101037979
+CovGI - marg
+0.0953027680516243
+LRP
+0.10839016735553741
+GI
+0.07368183135986328
+student
+   Hours Studied  Previous Scores  Extracurricular Activities  Sleep Hours  Sample Question Papers Practiced  Performance Index   
+0              7               99                           1            9                                 1               91.0   
+1              4               82                           0            4                                 2               65.0   
+2              8               51                           1            7                                 2               45.0   
+3              5               52                           1            5                                 2               36.0   
+4              7               75                           0            8                                 5               66.0   
+CovLRP - diag
+1.4646003246307373
+CovLRP - marg
+1.4710488319396973
+CovGI - diag
+1.5422674417495728
+CovGI - marg
+1.5487687587738037
+LRP
+0.05916642025113106
+GI
+0.07324012368917465
+mpg
+   cylinders  displacement  horsepower  weight  acceleration  model year  origin   mpg
+0          8         307.0       130.0    3504          12.0          70       1  18.0
+1          8         350.0       165.0    3693          11.5          70       1  15.0
+2          8         318.0       150.0    3436          11.0          70       1  18.0
+3          8         304.0       150.0    3433          12.0          70       1  16.0
+4          8         302.0       140.0    3449          10.5          70       1  17.0
+CovLRP - diag
+2.639490842819214
+CovLRP - marg
+2.398529052734375
+CovGI - diag
+1.2819370031356812
+CovGI - marg
+1.0672521591186523
+LRP
+0.4223964810371399
+GI
+0.5050629377365112
+california
+   longitude  latitude  housing_median_age  total_rooms  ...  population  households  median_income  median_house_value
+0    -122.23     37.88                  41          880  ...         322         126         8.3252               4.526
+1    -122.22     37.86                  21         7099  ...        2401        1138         8.3014               3.585
+2    -122.24     37.85                  52         1467  ...         496         177         7.2574               3.521
+3    -122.25     37.85                  52         1274  ...         558         219         5.6431               3.413
+4    -122.25     37.85                  52         1627  ...         565         259         3.8462               3.422
+
+[5 rows x 9 columns]
+CovLRP - diag
+2.2127768993377686
+CovLRP - marg
+1.9862037897109985
+CovGI - diag
+0.3183844983577728
+CovGI - marg
+0.2065720558166504
+LRP
+0.5187755227088928
+GI
+0.1807083934545517
