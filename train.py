@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import os
 from utils import mse_loss, nll_loss, nll_laplace_loss, lrp_vgg16_simple
 from datasets import *
+import torchvision.transforms as transforms
 
 
 
