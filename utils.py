@@ -19,7 +19,6 @@ def recreate_directory(dir_path):
     if os.path.exists(dir_path):
         shutil.rmtree(dir_path)
     os.makedirs(dir_path)
-    print(f"Directory '{dir_path}' has been recreated.")
 
 def mse_loss(y_true, y_pred):
 
@@ -28,7 +27,7 @@ def mse_loss(y_true, y_pred):
     return ((y_true - y_pred) ** 2).mean()
 
 
-def nll_loss(y_true, y_pred, eps = 1e-05):
+def nll_loss(y_true, y_pred, eps = 1e-3):
 
     y_true = y_true.flatten()
     mu,var = y_pred
@@ -557,9 +556,9 @@ def lrp_vgg16_simple(model, X):
 
         if isinstance(layers[l],torch.nn.Conv2d) or isinstance(layers[l],torch.nn.AvgPool2d):
 
-            if l <= 16:       rho = lambda p: p + 0.25*p.clamp(min=0); incr = lambda z: z+1e-9
-            if 17 <= l <= 30: rho = lambda p: p;                       incr = lambda z: z+1e-9+0.25*((z**2).mean()**.5).data
-            if l >= 31:       rho = lambda p: p;                       incr = lambda z: z+1e-9
+
+            rho = lambda p: p + 0.2*p.clamp(min=0); incr = lambda z: z+1e-9
+
 
             z = incr(utils_vgg16.newlayer(layers[l],rho).forward(A[l]))  # step 1
             s = (R[l+1]/z).data                                    # step 2
@@ -585,8 +584,456 @@ def lrp_vgg16_simple(model, X):
     (z*s).sum().backward(); c,cp,cm = A[0].grad,lb.grad,hb.grad            # step 3
     R[0] = (A[0]*c+lb*cp+hb*cm).data 
 
-    utils_vgg16.heatmap(np.array(R[0][0].cpu(), dtype = np.float32).sum(axis=0),20,20)
+    R_main = R[0][0].sum(axis=0)
+    # print(torch.isnan(R_main).any())
 
+    # utils_vgg16.heatmap(np.array(R[0][0].cpu(), dtype = np.float32).sum(axis=0),20,20)
+
+    return R_main
+
+
+def covlrp_vgg16_simple_deep_ensembles(models, input):
+    input_shape = input.shape[-2:]
+    input = input.clone()
+    relevances_all = []
+    for model in models:
+        
+        rel = lrp_vgg16_simple(model, input).flatten()
+        relevances_all.append(rel)
+
+    
+    relevances_tensor = torch.stack(relevances_all)    
+    relevances_tensor -=  relevances_tensor.mean(dim = 0)
+    cov_mat = (relevances_tensor.T @ relevances_tensor)/(len(models))
+
+    
+    
+    diag = cov_mat.diag()
+    marg = cov_mat.sum(dim = 1)
+
+
+    return diag.view(input_shape), marg.view(input_shape)
+
+
+def lrp_vgg16_simple_deep_ensembles(models, input):
+    input = input.clone()
+    activations_all = []
+    for model in models:
+        layers = list(model.vgg16._modules['features']) + utils_vgg16.toconv(list(model.vgg16._modules['classifier']))
+        L = len(layers)
+        A = [input]+[None]*L
+        for l in range(L): A[l+1] = layers[l].forward(A[l])
+        activations_all.append(A)
+
+    
+    last_layer_activations = [activations_all[m][-1].squeeze() for m in range(len(models))]
+    last_layer_activations_var = (torch.stack(last_layer_activations) - torch.stack(last_layer_activations).mean() )**2
+    last_layer_relevances = (last_layer_activations_var/len(models)).data
+    relevances_all = []
+
+    for m, model in enumerate(models):
+
+        layers = list(model.vgg16._modules['features']) + utils_vgg16.toconv(list(model.vgg16._modules['classifier']))
+
+        L = len(layers)
+        A = activations_all[m]
+        R = [None]*L + [last_layer_relevances[m]]
+
+        for l in range(0,L)[::-1]:
+        
+            A[l] = (A[l].data).requires_grad_(True)
+            if A[l].grad is not None:
+                    A[l].grad.zero_()     
+            
+
+            if isinstance(layers[l],torch.nn.MaxPool2d): layers[l] = torch.nn.AvgPool2d(2)
+
+            if isinstance(layers[l],torch.nn.Conv2d) or isinstance(layers[l],torch.nn.AvgPool2d):
+
+                rho = lambda p: p + 0.2*p.clamp(min=0); incr = lambda z: z+1e-9
+
+                z = incr(utils_vgg16.newlayer(layers[l],rho).forward(A[l]))  # step 1
+                s = (R[l+1]/z).data                                    # step 2
+                (z*s).sum().backward(); c = A[l].grad                  # step 3
+                R[l] = (A[l]*c).data                                   # step 4
+                
+            else:
+                
+                R[l] = R[l+1]
+
+
+        A[0] = (A[0].data).requires_grad_(True)
+        mean = torch.Tensor([0.485, 0.456, 0.406]).reshape(1,-1,1,1).to(input.device)
+        std  = torch.Tensor([0.229, 0.224, 0.225]).reshape(1,-1,1,1).to(input.device)
+
+        lb = (A[0].data*0+(0-mean)/std).requires_grad_(True)
+        hb = (A[0].data*0+(1-mean)/std).requires_grad_(True)
+
+        z = layers[0].forward(A[0]) + 1e-9                                     # step 1 (a)
+        z -= utils_vgg16.newlayer(layers[0],lambda p: p.clamp(min=0)).forward(lb)    # step 1 (b)
+        z -= utils_vgg16.newlayer(layers[0],lambda p: p.clamp(max=0)).forward(hb)    # step 1 (c)
+        s = (R[1]/z).data                                                      # step 2
+        (z*s).sum().backward(); c,cp,cm = A[0].grad,lb.grad,hb.grad            # step 3
+        R[0] = (A[0]*c+lb*cp+hb*cm).data 
+
+        R_main = R[0][0].sum(axis=0)
+        relevances_all.append(R_main)
+
+    return torch.stack([re for re in relevances_all]).sum(dim = 0)
+
+
+def gi_vgg16_simple_deep_ensembles(models, input):
+    input = input.clone()
+    input_ex = input.requires_grad_(True)
+    if input_ex.grad is not None:
+        input_ex.grad.zero_()
+    outputs = []
+    for model in models:
+        outputs.append(model(input_ex))
+    var = torch.stack(outputs).var(correction=0)
+    var.backward()
+    x = (input_ex * input_ex.grad)[0].sum(axis = 0).data
+    return x
+        
+def gi_vgg16_simple(model, input):
+    input = input.clone()
+    input_ex = input.requires_grad_(True)
+    if input_ex.grad is not None:
+        input_ex.grad.zero_()
+    y = model(input_ex)
+    y.backward()
+    return (input_ex * input_ex.grad)[0].sum(axis = 0).data
+
+
+def covgi_vgg16_simple_deep_ensembles(models, input):
+    input_shape = input.shape[-2:]
+    input = input.clone()
+    relevances_all = []
+    for model in models:
+        
+        rel = gi_vgg16_simple(model, input).flatten()
+        relevances_all.append(rel)
+
+    
+    relevances_tensor = torch.stack(relevances_all)    
+    relevances_tensor -=  relevances_tensor.mean(dim = 0)
+    cov_mat = (relevances_tensor.T @ relevances_tensor)/(len(models))
+
+    
+    
+    diag = cov_mat.diag()
+    marg = cov_mat.sum(dim = 1)
+
+
+    return diag.view(input_shape), marg.view(input_shape)
+
+
+
+
+def gi_vgg16_density_deep_ensembles(models, input):
+    input = input.clone()
+    input_ex = input.requires_grad_(True)
+    if input_ex.grad is not None:
+        input_ex.grad.zero_()
+    mus =[]
+    vars = []
+    for model in models:
+        mu, var = model(input_ex)
+        mus.append(mu)
+        vars.append(var)
+    cat_mu_tenosr = torch.stack(mus,)
+
+    cat_var_tensor = torch.stack(vars)
+    vars_mu = (cat_var_tensor).mean()
+    mus_var = cat_mu_tenosr.var(correction=0)
+    var_comp = vars_mu + mus_var
+    var_comp.backward()
+    x = (input_ex * input_ex.grad)[0].sum(axis = 0).data
+    return x
+
+
+def lrp_vgg16_density_deep_ensembles(models, input):
+    input = input.clone()
+    activations_all = []
+    for model in models:
+        layers = list(model.vgg16._modules['features']) + utils_vgg16.toconv(list(model.vgg16._modules['classifier']))
+        l_2, l_3 = utils_vgg16.toconv_linear([model.l_2, model.l_3])
+        L = len(layers)
+        A = [input]+[None]*L
+        for l in range(L): A[l+1] = layers[l].forward(A[l])
+        A.append(torch.cat( (l_2(A[L]), l_3(A[L]).abs())) )
+        activations_all.append(A)
+
+    mu_activations = [activations_all[m][-1][0].squeeze() for m in range(len(models))]
+    
+    last_layer_activations_mu = (torch.stack(mu_activations) - torch.stack(mu_activations).mean() )**2
+    last_layer_activations_mu = (last_layer_activations_mu/len(models)).data 
+    last_layer_activations_var = (torch.stack([activations_all[m][-1][1].squeeze() for m in range(len(models))]).data)/len(models)
+ 
+    relevances_all = []
+
+    for m, model in enumerate(models):
+
+        layers = list(model.vgg16._modules['features']) + utils_vgg16.toconv(list(model.vgg16._modules['classifier']))
+        l_2, l_3 = utils_vgg16.toconv_linear([model.l_2, model.l_3])
+
+        L = len(layers)
+        A = activations_all[m]
+        R = [None]*(L+1) + [torch.stack([last_layer_activations_mu[m], last_layer_activations_var[m]])]
+
+        A[L]= (A[L].data).requires_grad_(True)   
+        if A[L].grad is not None:
+            A[L].grad.zero_()
+
+        rho = lambda p: p + 0.3*p.clamp(min=0); incr = lambda z: z+1e-9
+       
+        z_1 = incr(utils_vgg16.newlayer(l_2,rho).forward(A[L])) 
+        z_2 = incr(utils_vgg16.newlayer(l_3,rho).forward(A[L]).abs()) 
+        s_1 = (last_layer_activations_mu[m]/(z_1)).data 
+        s_2 = (last_layer_activations_var[m]/(z_2)).data
+        ((z_1 * s_1).sum() + (z_2 * s_2).sum()) .backward()
+        c = A[L].grad
+        R[L] = (c * A[L]).data
+
+
+
+        for l in range(0,L)[::-1]:
+        
+            A[l] = (A[l].data).requires_grad_(True)
+            if A[l].grad is not None:
+                    A[l].grad.zero_()     
+
+
+
+            if isinstance(layers[l],torch.nn.MaxPool2d): layers[l] = torch.nn.AvgPool2d(2)
+
+            if isinstance(layers[l],torch.nn.Conv2d) or isinstance(layers[l],torch.nn.AvgPool2d):
+
+
+                rho = lambda p: p + 0.2*p.clamp(min=0); incr = lambda z: z+1e-9
+
+                z = incr(utils_vgg16.newlayer(layers[l],rho).forward(A[l]))  # step 1
+                s = (R[l+1]/z).data                                    # step 2
+                (z*s).sum().backward(); c = A[l].grad                  # step 3
+                R[l] = (A[l]*c).data                                   # step 4
+                
+            else:
+                
+                R[l] = R[l+1]
+
+
+        A[0] = (A[0].data).requires_grad_(True)
+        mean = torch.Tensor([0.485, 0.456, 0.406]).reshape(1,-1,1,1).to(input.device)
+        std  = torch.Tensor([0.229, 0.224, 0.225]).reshape(1,-1,1,1).to(input.device)
+
+        lb = (A[0].data*0+(0-mean)/std).requires_grad_(True)
+        hb = (A[0].data*0+(1-mean)/std).requires_grad_(True)
+
+        z = layers[0].forward(A[0]) + 1e-9                                     # step 1 (a)
+        z -= utils_vgg16.newlayer(layers[0],lambda p: p.clamp(min=0)).forward(lb)    # step 1 (b)
+        z -= utils_vgg16.newlayer(layers[0],lambda p: p.clamp(max=0)).forward(hb)    # step 1 (c)
+        s = (R[1]/z).data                                                      # step 2
+        (z*s).sum().backward(); c,cp,cm = A[0].grad,lb.grad,hb.grad            # step 3
+        R[0] = (A[0]*c+lb*cp+hb*cm).data 
+
+        R_main = R[0][0].sum(axis=0)
+        relevances_all.append(R_main)
+
+    return torch.stack([re for re in relevances_all]).sum(dim = 0)
+
+
+          
+def lrp_vgg16_density(model, input, mu_propagate = True):
+    input = input.clone()
+    layers = list(model.vgg16._modules['features']) + utils_vgg16.toconv(list(model.vgg16._modules['classifier']))
+    l_2, l_3 = utils_vgg16.toconv_linear([model.l_2, model.l_3])
+    L = len(layers)
+    A = [input]+[None]*L
+    for l in range(L): A[l+1] = layers[l].forward(A[l])
+    A.append(torch.cat( (l_2(A[L]), l_3(A[L]).abs())) )
+
+    if mu_propagate:
+        R = [None]*(L+1) + [l_2(A[L])]
+        A[L]= (A[L].data).requires_grad_(True)   
+        if A[L].grad is not None:
+            A[L].grad.zero_()
+
+        rho = lambda p: p + 0.2*p.clamp(min=0); incr = lambda z: z+1e-9
+       
+        z = incr(utils_vgg16.newlayer(l_2,rho).forward(A[L])) 
+        s = (A[-1][0]/(z+1e-9)).data 
+        ((z * s).sum()).backward()
+        c = A[L].grad
+        R[L] = (c * A[L]).data
+    else:
+        R = [None]*(L+1) + [l_3(A[L]).abs()]
+        A[L]= (A[L].data).requires_grad_(True)   
+        if A[L].grad is not None:
+            A[L].grad.zero_()
+
+        rho = lambda p: p + 0.2*p.clamp(min=0); incr = lambda z: z+1e-9
+       
+        z = incr(utils_vgg16.newlayer(l_3,rho).forward(A[L]).abs() )
+        s = (A[-1][1]/(z)).data 
+        ((z * s).sum()).backward()
+        c = A[L].grad
+        R[L] = (c * A[L]).data
+
+    for l in range(0,L)[::-1]:
+    
+        A[l] = (A[l].data).requires_grad_(True)
+
+        if isinstance(layers[l],torch.nn.MaxPool2d): layers[l] = torch.nn.AvgPool2d(2)
+
+        if isinstance(layers[l],torch.nn.Conv2d) or isinstance(layers[l],torch.nn.AvgPool2d):
+
+            rho = lambda p: p + 0.2*p.clamp(min=0); incr = lambda z: z+1e-9
+
+
+            z = incr(utils_vgg16.newlayer(layers[l],rho).forward(A[l]))  # step 1
+            s = (R[l+1]/z).data                                    # step 2
+            (z*s).sum().backward(); c = A[l].grad                  # step 3
+            R[l] = (A[l]*c).data                                   # step 4
+            
+        else:
+            
+            R[l] = R[l+1]
+
+
+    A[0] = (A[0].data).requires_grad_(True)
+    mean = torch.Tensor([0.485, 0.456, 0.406]).reshape(1,-1,1,1).to(input.device)
+    std  = torch.Tensor([0.229, 0.224, 0.225]).reshape(1,-1,1,1).to(input.device)
+
+    lb = (A[0].data*0+(0-mean)/std).requires_grad_(True)
+    hb = (A[0].data*0+(1-mean)/std).requires_grad_(True)
+
+    z = layers[0].forward(A[0]) + 1e-9                                     # step 1 (a)
+    z -= utils_vgg16.newlayer(layers[0],lambda p: p.clamp(min=0)).forward(lb)    # step 1 (b)
+    z -= utils_vgg16.newlayer(layers[0],lambda p: p.clamp(max=0)).forward(hb)    # step 1 (c)
+    s = (R[1]/z).data                                                      # step 2
+    (z*s).sum().backward(); c,cp,cm = A[0].grad,lb.grad,hb.grad            # step 3
+    R[0] = (A[0]*c+lb*cp+hb*cm).data 
+
+    R_main = R[0][0].sum(axis=0)
+    # print(torch.isnan(R_main).any())
+
+    # utils_vgg16.heatmap(np.array(R[0][0].cpu(), dtype = np.float32).sum(axis=0),20,20)
+
+    return R_main
+
+
+def covlrp_vgg16_density_deep_ensembles(models, input):
+    input_shape = input.shape[-2:]
+    input = input.clone()
+    relevances_mu = []
+    relevances_var = []
+    for model in models:
+        relevances_mu.append(lrp_vgg16_density(model, input, mu_propagate = True).flatten())
+        relevances_var.append(lrp_vgg16_density(model, input, mu_propagate = False).flatten())
+
+    relevances_mu_tensor = torch.stack(relevances_mu)    
+    relevances_mu_tensor -=  relevances_mu_tensor.mean(dim = 0)
+    cov_mat = (relevances_mu_tensor.T @ relevances_mu_tensor)/(len(models))
+    diag = cov_mat.diag()
+    marg = cov_mat.sum(axis = 1)
+
+    relevances_var_tensor = torch.stack(relevances_var).mean(dim = 0)
+    return (diag + relevances_var_tensor).view(input_shape), (marg + relevances_var_tensor).view(input_shape)
+
+
+def gi_vgg16_density(model, input, mu_propagate = True):
+    input = input.clone()
+    input_ex = input.requires_grad_(True)
+    if input_ex.grad is not None:
+        input_ex.grad.zero_()
+    mu, var = model(input_ex)
+    if mu_propagate:
+        mu.backward()
+    else:
+        var.backward()
+    return (input_ex * input_ex.grad)[0].sum(axis = 0).data
+
+
+
+def covgi_vgg16_density_deep_ensembles(models, input):
+    input_shape = input.shape[-2:]
+    input = input.clone()
+    relevances_mu = []
+    relevances_var = []
+    for model in models:
+        relevances_mu.append(gi_vgg16_density(model, input, mu_propagate = True).flatten())
+        relevances_var.append(gi_vgg16_density(model, input, mu_propagate = False).flatten())
+
+    relevances_mu_tensor = torch.stack(relevances_mu)    
+    relevances_mu_tensor -=  relevances_mu_tensor.mean(dim = 0)
+    cov_mat = (relevances_mu_tensor.T @ relevances_mu_tensor)/(len(models))
+    diag = cov_mat.diag()
+    marg = cov_mat.sum(axis = 1)
+
+    relevances_var_tensor = torch.stack(relevances_var).mean(dim = 0)
+    return (diag + relevances_var_tensor).view(input_shape), (marg + relevances_var_tensor).view(input_shape)
+
+
+def get_eye_g_ids(root_dir = "datasets_face\CelebAMask-HQ\CelebAMask-HQ-attribute-anno.txt"):
+
+    eye_g_files = []
+    with open(root_dir) as f:
+        for idx, line in enumerate(f):
+
+            
+            if idx == 0:
+                continue
+
+            
+
+            if idx == 1:
+                atts = line.split()   
+                eye_g_idx = atts.index("Eyeglasses")
+                wearing_hat_idx = atts.index("Wearing_Hat")
+                continue
+            
+            atts = line.split()
+            if atts[eye_g_idx + 1] == "1" and atts[wearing_hat_idx +1] == "-1":
+
+                eye_g_files.append(atts[0])
+    
+    return eye_g_files
+            
+
+def recreate_folder(folder_path):
+    if os.path.exists(folder_path):
+        shutil.rmtree(folder_path)
+    os.makedirs(folder_path)
+
+
+    
+def create_eye_g(root_dir_mask = "datasets_face\CelebAMask-HQ\CelebAMask-HQ-mask-anno", 
+                 root_dir_anno = "datasets_face\CelebAMask-HQ\CelebAMask-HQ-attribute-anno.txt", 
+                 tgt_dir = "datasets_face\CelebAMask-HQ\CelebA-Eye-G",
+                 celeb_hq_ds_folder = "datasets_face\CelebAMask-HQ\CelebA-HQ-img"):
+    
+    recreate_folder(tgt_dir)
+    eye_g_ids = get_eye_g_ids(root_dir_anno)
+
+    for eye_g_id in eye_g_ids:
+
+        eye_g_folder = os.path.join(tgt_dir, f"{int(eye_g_id.split('.')[0])}_atts")
+
+        recreate_folder(eye_g_folder)
+
+        hq_img_path = os.path.join(celeb_hq_ds_folder,eye_g_id)
+        shutil.copy2(hq_img_path, os.path.join(eye_g_folder, eye_g_id))
+        spec_folder_path = os.path.join(root_dir_mask, f"{int(eye_g_id.split('.')[0])//2000}")
+
+        for mask_file in os.listdir(spec_folder_path):
+            if ".DS" in mask_file:
+                continue
+            if int(mask_file.split("_")[0]) == int(eye_g_id.split(".")[0]):
+                shutil.copy2(os.path.join(spec_folder_path,mask_file), os.path.join(eye_g_folder, mask_file))
+
+        
+        
+# create_eye_g()
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # ds = Datasets("boston", transform= lambda x : x.to(device), shuffle=False)

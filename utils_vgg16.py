@@ -1,9 +1,11 @@
 import numpy
 import copy
 import matplotlib
+from matplotlib.colors import ListedColormap
 from matplotlib import pyplot as plt
 import torch
 import torch.nn as nn
+
 
 # --------------------------------------
 # Load parameters
@@ -27,11 +29,10 @@ def loaddata():
 # Visualizing data
 # --------------------------------------
 
-def heatmap(R,sx,sy):
+def heatmap(R,sx,sy, save_path = None):
 
     b = 10*((numpy.abs(R)**3.0).mean()**(1.0/3))
 
-    from matplotlib.colors import ListedColormap
     my_cmap = plt.cm.seismic(numpy.arange(plt.cm.seismic.N))
     my_cmap[:,0:3] *= 0.85
     my_cmap = ListedColormap(my_cmap)
@@ -39,7 +40,11 @@ def heatmap(R,sx,sy):
     plt.subplots_adjust(left=0,right=1,bottom=0,top=1)
     plt.axis('off')
     plt.imshow(R,cmap=my_cmap,vmin=-b,vmax=b,interpolation='nearest')
-    plt.show()
+    if save_path:
+        plt.savefig(save_path, bbox_inches="tight")
+        plt.close()
+    else:
+        plt.show()
 
 def digit(X,sx,sy):
 
@@ -104,6 +109,18 @@ def toconv(layers):
         else:
             newlayers += [layer]
 
+    return newlayers
+
+
+def toconv_linear(layers):
+    newlayers = []
+    for layer in layers:
+        newlayer = None
+        m,n = layer.weight.shape[1],layer.weight.shape[0]
+        newlayer = nn.Conv2d(m,n,1)
+        newlayer.weight = nn.Parameter(layer.weight.reshape(n,m,1,1))
+        newlayer.bias = nn.Parameter(layer.bias)
+        newlayers += [newlayer]
     return newlayers
 
 # --------------------------------------------------------------

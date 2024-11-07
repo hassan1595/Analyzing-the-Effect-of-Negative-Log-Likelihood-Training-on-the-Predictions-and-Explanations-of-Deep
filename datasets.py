@@ -7,6 +7,7 @@ from PIL import Image
 import os
 from torchvision import transforms
 from models import *
+import matplotlib.pyplot as plt
 class Datasets(Dataset):
 
     def __init__(self, dataset_name, transform=None, shuffle = True):
@@ -87,25 +88,95 @@ class UTKFaceDataset(Dataset):
 
         img_name = os.path.basename(img_path)
  
-        return image, torch.tensor(int(2), dtype = torch.float32)
-        # age, *_ = img_name.split('_')
-        # return image, torch.tensor(int(age), dtype = torch.float32)
+        age, *_ = img_name.split('_')
+        return image, torch.tensor(int(age), dtype = torch.float32)
+    
+
+
+# class UTKFaceDataset(Dataset):
+#     def __init__(self, transform=None):
+#         self.root_dir = "datasets_face/UTKFace"
+#         self.transform = transform
+#         self.image_paths = [os.path.join(self.root_dir, img_name) for img_name in os.listdir(self.root_dir)]
+        
+#     def __len__(self):
+#         return len(self.image_paths)
+    
+#     def __getitem__(self, idx):
+#         img_path = self.image_paths[idx]
+#         image = Image.open(img_path).convert('RGB')
+        
+#         if self.transform:
+#             image = self.transform(image)
+        
+
+#         img_name = os.path.basename(img_path)
+ 
+#         age, *_ = img_name.split('_')
+#         return image, torch.tensor(int(age), dtype = torch.float32)
+    
+
+class CelebADataset(Dataset):
+    def __init__(self, transform=None, remove_eyeglasses = True, total_size = 70000):
+        self.root_dir = "datasets_face/CelebA/CelebA_imgs"
+        csv_path = "datasets_face/CelebA/list_attr_celeba.csv"
+        dataset = pd.read_csv(csv_path)
+
+        if remove_eyeglasses:
+            dataset = dataset[dataset["Eyeglasses"] != 1]
+        else:
+            dataset = dataset[dataset["Eyeglasses"] == 1]
+
+        self.transform = transform
+
+        self.image_paths = [os.path.join(self.root_dir, img_name) for img_name in list(dataset["image_id"])]
+        self.labels = list(dataset["Bags_Under_Eyes"])
+        idx_p = [idx for idx, l in enumerate(self.labels)if l == 1][:total_size//2]
+        idx_n = [idx for idx, l in enumerate(self.labels)if l == -1][:total_size//2]
+
+        self.image_paths = [self.image_paths[idx] for idx in idx_p + idx_n]
+        self.labels = [self.labels[idx] for idx in idx_p + idx_n]
+
+
+        
+        
+    def __len__(self):
+        return len(self.image_paths)
+    
+    def __getitem__(self, idx):
+        img_path = self.image_paths[idx]
+        image = Image.open(img_path).convert('RGB')
+        
+        if self.transform:
+            image = self.transform(image)
+        
+        return image, torch.tensor(int(self.labels[idx]), dtype = torch.float32)
     
 
 # def main():
 #     data_transforms = transforms.Compose([
 #         transforms.Resize((224, 224)),
 #         transforms.ToTensor(),
-#         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+#         # transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 #     ])
 
-#     vg = vgg16SimpleDensity()
-#     dataset = UTKFaceDataset(transform=data_transforms)
+#     dataset = CelebADataset(transform=data_transforms)
 #     dataloader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=10)
 
 #     for inps, labels in dataloader:
-#         print(vg(inps))
-#         break
+
+#         img_array = inps[0].permute(1, 2, 0).numpy() * 255
+#         img_array = img_array.astype(np.uint8)  
+
+#         img = Image.fromarray(img_array)
+
+
+#         plt.figure(figsize=(8, 8))
+#         plt.subplot(1, 1, 1)
+#         plt.imshow(img)
+#         plt.title(f"Label: {labels[0].item()}")
+#         plt.axis('off')  # Hide axes
+#         plt.show()
 
 # if __name__ == '__main__':
 #     main()

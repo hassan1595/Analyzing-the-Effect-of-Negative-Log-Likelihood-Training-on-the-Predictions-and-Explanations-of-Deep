@@ -480,8 +480,8 @@ class TrainMCdropout:
     
                     
 
-class TrainSimpleUTK():
-    def __init__(self, batch_size = 128, n_epochs = 10, lr =  1e-4,
+class TrainSimpleVGG16():
+    def __init__(self, batch_size = 128, n_epochs = 5, lr =  1e-4,
                   save_path = "model_dirs_face/train_ensemble/model_0.pt", verbose = True):
         self.batch_size = batch_size
         self.n_epochs = n_epochs
@@ -496,7 +496,7 @@ class TrainSimpleUTK():
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
-        dataset = UTKFaceDataset(transform=data_transforms)
+        dataset = CelebADataset(transform=data_transforms)
         self.dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle = True, num_workers=10)
     
     
@@ -517,6 +517,8 @@ class TrainSimpleUTK():
                 outputs = self.model(inputs)
                 loss = mse_loss(targets, outputs)
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                
                 optimizer.step()
                 train_loss += loss.item() * inputs.size(0)
                 inputs_len += inputs.size(0)
@@ -535,8 +537,8 @@ class TrainSimpleUTK():
     
 
 
-class TrainDensityUTK():
-    def __init__(self, batch_size = 128, n_epochs = 10, lr =  1e-4,
+class TrainDensityVGG16():
+    def __init__(self, batch_size = 128, n_epochs = 5, lr =  1e-4,
                   save_path = "model_dirs_face/train_ensemble_density/model_0.pt", verbose = True):
         self.batch_size = batch_size
         self.n_epochs = n_epochs
@@ -551,7 +553,7 @@ class TrainDensityUTK():
         transforms.ToTensor(),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
-        dataset = UTKFaceDataset(transform=data_transforms)
+        dataset = CelebADataset(transform=data_transforms)
         self.dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle = True, num_workers=10)
     
     
@@ -571,6 +573,8 @@ class TrainDensityUTK():
                 mu, var = self.model(inputs)
                 loss = nll_loss(targets, (mu,var))
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+
                 optimizer.step()
                 train_loss += loss.item() * inputs.size(0)
                 inputs_len += inputs.size(0)

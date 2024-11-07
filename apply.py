@@ -9,7 +9,7 @@ import shutil
 import utils
 from models import SimpleNet, SimpleDensityNet
 from utils import *
-import math
+from tqdm import tqdm
 
 def cross_validation(ds, batch_size, TrainClass, n_repetitions = 1, params = {}, replicate_train = False, m = 5, n_folds=10, error_count=2, verbose = True):
 
@@ -185,7 +185,7 @@ def plot_normalized_bar(tensor_1, tensor_2, c_names, file_path, label_1, label_2
 
     r1 = np.arange(len(c_names))
     bar_width = 0.35
-    r2 = [x + bar_width for x in r1]
+    r2 = [x + bar_width for x in r1] 
     plt.bar(r1, n_1, color='slateblue', width=bar_width, edgecolor='grey', label=label_1)
     plt.bar(r2, n_2, color='indianred', width=bar_width, edgecolor='grey', label=label_2)
    
@@ -1096,15 +1096,328 @@ def dec_compare():
         n_false = np.array(n_false)
         print((n_true/(n_true + n_false)).tolist())
 
-def train_utk():
+def train_vgg16():
     for i in range(10):
-        t = TrainSimpleUTK(save_path = f"model_dirs_face/train_ensemble/model_{i}.pt")
+        t = TrainSimpleVGG16(save_path = f"model_dirs_face/train_ensemble/model_{i}.pt")
         t.train()
 
+    # for i in range(10):
+    #     t = TrainDensityVGG16(save_path = f"model_dirs_face/train_ensemble_density/model_{i}.pt")          
+    #     t.train()
+
+
+def exp_vgg16(src_dir = "datasets_face\CelebAMask-HQ\CelebA-Eye-G", tgt_dir = "exp_faces", log_file_1 = "logs/logs_4.txt", log_file_2 = "logs/logs_5.txt"):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    models_simple = []
     for i in range(10):
-        t = TrainDensityUTK(save_path = f"model_dirs_face/train_ensemble_density/model_{i}.pt")          
-        t.train()
+        model = vgg16SimpleNet()
+        model.load_state_dict(torch.load(f"model_dirs_face/train_ensemble/model_{i}.pt"))
+        model.eval()
+        model.to(device)
+        models_simple.append(model)
+
+    data_transforms = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+
+    simple_exp_dict = {"lrp_exp" : {}, "gi_exp" : {}, "covlrp_diag_exp" : {}, "covlrp_marg_exp" : {}, "covgi_diag_exp" : {}, "covgi_marg_exp" : {}}
+    for img_dir in tqdm(sorted(os.listdir(src_dir))):
+        main_img_path = os.path.join(src_dir, img_dir, img_dir[:-5] + ".jpg")
+        image = Image.open(main_img_path).convert('RGB').resize((224, 224))
+        x = data_transforms(image).unsqueeze(0).to(device)
+        lrp_rel = lrp_vgg16_simple_deep_ensembles(models_simple, x)
+        lrp_acc = np.nan_to_num(np.array(lrp_rel.cpu(), dtype = np.float32)).sum()
+
+        gi_rel = gi_vgg16_simple_deep_ensembles(models_simple, x)
+        gi_acc = np.nan_to_num(np.array(gi_rel.cpu(), dtype = np.float32)).sum()
+  
+        covlrp_diag, covlrp_marg = covlrp_vgg16_simple_deep_ensembles(models_simple, x)
+        covlrp_diag_acc = np.nan_to_num(np.array(covlrp_diag.cpu(), dtype = np.float32)).sum()
+        covlrp_marg_acc = np.nan_to_num(np.array(covlrp_marg.cpu(), dtype = np.float32)).sum()
+
+        covgi_diag, covgi_marg = covgi_vgg16_simple_deep_ensembles(models_simple, x)
+        covgi_diag_acc = np.nan_to_num(np.array(covgi_diag.cpu(), dtype = np.float32)).sum()
+        covgi_marg_acc = np.nan_to_num(np.array(covgi_marg.cpu(), dtype = np.float32)).sum()
+
+        img_exp_dir_path = os.path.join(tgt_dir, img_dir[:-5] + "_simple_exp")
+        utils.recreate_directory(img_exp_dir_path)
+        image.save(os.path.join(img_exp_dir_path, "main_img.png"))
+        for img_att_rel_path in os.listdir(os.path.join(src_dir, img_dir)):
+            if img_att_rel_path ==  img_dir[:-5] + ".jpg":
+                continue
+
+            img_att_path = os.path.join(src_dir, img_dir,img_att_rel_path)
+            img_att_name = ("_".join(img_att_rel_path.split("_")[1:]))[:-4]
+            image_att = Image.open(img_att_path).convert('L').resize((224, 224))
+            mask_img_att = np.asarray(image_att, np.uint8)/255
+
+            lrp_exp_img = np.nan_to_num(np.array(lrp_rel.cpu(), dtype = np.float32)) 
+            lrp_mask = (lrp_exp_img * mask_img_att).sum()
+            simple_exp_dict["lrp_exp"].setdefault(img_att_name, 0)
+            simple_exp_dict["lrp_exp"][img_att_name] += lrp_mask
+            lrp_acc -= lrp_mask
+            utils_vgg16.heatmap(lrp_exp_img, 20,20, save_path= os.path.join(img_exp_dir_path, "lrp_exp.png"))
+
+            gi_exp_img = np.nan_to_num(np.array(gi_rel.cpu(), dtype = np.float32)) 
+            gi_mask = (gi_exp_img * mask_img_att).sum()
+            simple_exp_dict["gi_exp"].setdefault(img_att_name, 0)
+            simple_exp_dict["gi_exp"][img_att_name] += gi_mask
+            gi_acc -= gi_mask
+            utils_vgg16.heatmap(gi_exp_img, 20,20, save_path= os.path.join(img_exp_dir_path, "gi_exp.png"))
+
+            covlrp_exp_diag_img = np.nan_to_num(np.array(covlrp_diag.cpu(), dtype = np.float32)) 
+            covlrp_diag_mask = (covlrp_exp_diag_img* mask_img_att).sum()
+            simple_exp_dict["covlrp_diag_exp"].setdefault(img_att_name, 0)
+            simple_exp_dict["covlrp_diag_exp"][img_att_name] += covlrp_diag_mask
+            covgi_diag_acc -= covlrp_diag_mask
+            utils_vgg16.heatmap(covlrp_exp_diag_img, 20,20, save_path= os.path.join(img_exp_dir_path, "covlrp_diag_exp.png"))
+
+            covlrp_exp_marg_img = np.nan_to_num(np.array(covlrp_marg.cpu(), dtype = np.float32))
+            covlrp_marg_mask = (covlrp_exp_marg_img * mask_img_att).sum()
+            simple_exp_dict["covlrp_marg_exp"].setdefault(img_att_name, 0)
+            simple_exp_dict["covlrp_marg_exp"][img_att_name] += covlrp_marg_mask
+            covlrp_marg_acc -= covlrp_marg_mask
+            utils_vgg16.heatmap(covlrp_exp_marg_img, 20,20, save_path= os.path.join(img_exp_dir_path, "covlrp_marg_exp.png"))
+
+            covgi_exp_diag_img = np.nan_to_num(np.array(covgi_diag.cpu(), dtype = np.float32))
+            covgi_diag_mask = ( covgi_exp_diag_img * mask_img_att).sum()
+            simple_exp_dict["covgi_diag_exp"].setdefault(img_att_name, 0)
+            simple_exp_dict["covgi_diag_exp"][img_att_name] += covgi_diag_mask
+            covgi_diag_acc -= covgi_diag_mask
+            utils_vgg16.heatmap(covgi_exp_diag_img, 20,20, save_path= os.path.join(img_exp_dir_path, "covgi_diag_exp.png"))
+
+            covgi_exp_marg_img = np.nan_to_num(np.array(covgi_marg.cpu(), dtype = np.float32)) 
+            covgi_marg_mask = (covgi_exp_marg_img * mask_img_att).sum()
+            simple_exp_dict["covgi_marg_exp"].setdefault(img_att_name, 0)
+            simple_exp_dict["covgi_marg_exp"][img_att_name] += covgi_marg_mask
+            covgi_marg_acc -= covgi_marg_mask
+            utils_vgg16.heatmap(covgi_exp_marg_img, 20,20, save_path= os.path.join(img_exp_dir_path, "covgi_marg_exp.png"))
+
+        
+        simple_exp_dict["lrp_exp"]["background"] = lrp_acc
+        simple_exp_dict["gi_exp"]["background"] = gi_acc
+        simple_exp_dict["covlrp_diag_exp"]["background"] = covlrp_diag_acc
+        simple_exp_dict["covlrp_marg_exp"]["background"] = covlrp_marg_acc
+        simple_exp_dict["covgi_diag_exp"]["background"] = covgi_diag_acc
+        simple_exp_dict["covgi_marg_exp"]["background"] = covgi_marg_acc
+
+
+    with open(log_file_1, 'w') as log_file: 
+        # log_file.write('Sum Features: \n')
+
+        for exp_name, atts_dict in simple_exp_dict.items():
+            log_file.write(exp_name + ":\n\n")
+            sum_atts = sum(list(atts_dict.values()))
+            for att_name, att_value in atts_dict.items():
+                log_file.write(f"{att_name}: {att_value/sum_atts}\n")
+
+            log_file.write("\n\n\n")
+
+    del models_simple
+
+
+
+    models_density = []
+    for i in range(10):
+        load_path = f"model_dirs_face/train_ensemble_density/model_{i}.pt"
+        model = vgg16DensityNet()
+        model.load_state_dict(torch.load( os.path.join(os.path.dirname(os.path.realpath(__file__)), load_path)))
+        model.eval()
+        model.to(device)
+        models_density.append(model)
+
+
+    data_transforms = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    ])
+
+    density_exp_dict = {"lrp_exp" : {}, "gi_exp" : {}, "covlrp_diag_exp" : {}, "covlrp_marg_exp" : {}, "covgi_diag_exp" : {}, "covgi_marg_exp" : {}}
+
+
+    for img_dir in tqdm(sorted(os.listdir(src_dir))):
+        main_img_path = os.path.join(src_dir, img_dir, img_dir[:-5] + ".jpg")
+        image = Image.open(main_img_path).convert('RGB').resize((224, 224))
+        x = data_transforms(image).unsqueeze(0).to(device)
+        lrp_rel = lrp_vgg16_density_deep_ensembles(models_density, x)
+        lrp_acc = np.nan_to_num(np.array(lrp_rel.cpu(), dtype = np.float32)).sum()
+
+        gi_rel = gi_vgg16_density_deep_ensembles(models_density, x)
+        gi_acc = np.nan_to_num(np.array(gi_rel.cpu(), dtype = np.float32)).sum()
+  
+        covlrp_diag, covlrp_marg = covlrp_vgg16_density_deep_ensembles(models_density, x)
+        covlrp_diag_acc = np.nan_to_num(np.array(covlrp_diag.cpu(), dtype = np.float32)).sum()
+        covlrp_marg_acc = np.nan_to_num(np.array(covlrp_marg.cpu(), dtype = np.float32)).sum()
+
+        covgi_diag, covgi_marg = covgi_vgg16_density_deep_ensembles(models_density, x)
+        covgi_diag_acc = np.nan_to_num(np.array(covgi_diag.cpu(), dtype = np.float32)).sum()
+        covgi_marg_acc = np.nan_to_num(np.array(covgi_marg.cpu(), dtype = np.float32)).sum()
+
+        img_exp_dir_path = os.path.join(tgt_dir, img_dir[:-5] + "_density_exp")
+        utils.recreate_directory(img_exp_dir_path)
+        image.save(os.path.join(img_exp_dir_path, "main_img.png"))
+        for img_att_rel_path in os.listdir(os.path.join(src_dir, img_dir)):
+            if img_att_rel_path ==  img_dir[:-5] + ".jpg":
+                continue
+
+            img_att_path = os.path.join(src_dir, img_dir,img_att_rel_path)
+            img_att_name = ("_".join(img_att_rel_path.split("_")[1:]))[:-4]
+            image_att = Image.open(img_att_path).convert('L').resize((224, 224))
+            mask_img_att = np.asarray(image_att, np.uint8)/255
+
+            lrp_exp_img = np.nan_to_num(np.array(lrp_rel.cpu(), dtype = np.float32)) 
+            lrp_mask = (lrp_exp_img * mask_img_att).sum()
+            density_exp_dict["lrp_exp"].setdefault(img_att_name, 0)
+            density_exp_dict["lrp_exp"][img_att_name] += lrp_mask
+            lrp_acc -= lrp_mask
+            utils_vgg16.heatmap(lrp_exp_img, 20,20, save_path= os.path.join(img_exp_dir_path, "lrp_exp.png"))
+
+            gi_exp_img = np.nan_to_num(np.array(gi_rel.cpu(), dtype = np.float32)) 
+            gi_mask = (gi_exp_img * mask_img_att).sum()
+            density_exp_dict["gi_exp"].setdefault(img_att_name, 0)
+            density_exp_dict["gi_exp"][img_att_name] += gi_mask
+            gi_acc -= gi_mask
+            utils_vgg16.heatmap(gi_exp_img, 20,20, save_path= os.path.join(img_exp_dir_path, "gi_exp.png"))
+
+            covlrp_exp_diag_img = np.nan_to_num(np.array(covlrp_diag.cpu(), dtype = np.float32)) 
+            covlrp_diag_mask = (covlrp_exp_diag_img* mask_img_att).sum()
+            density_exp_dict["covlrp_diag_exp"].setdefault(img_att_name, 0)
+            density_exp_dict["covlrp_diag_exp"][img_att_name] += covlrp_diag_mask
+            covgi_diag_acc -= covlrp_diag_mask
+            utils_vgg16.heatmap(covlrp_exp_diag_img, 20,20, save_path= os.path.join(img_exp_dir_path, "covlrp_diag_exp.png"))
+
+            covlrp_exp_marg_img = np.nan_to_num(np.array(covlrp_marg.cpu(), dtype = np.float32))
+            covlrp_marg_mask = (covlrp_exp_marg_img * mask_img_att).sum()
+            density_exp_dict["covlrp_marg_exp"].setdefault(img_att_name, 0)
+            density_exp_dict["covlrp_marg_exp"][img_att_name] += covlrp_marg_mask
+            covlrp_marg_acc -= covlrp_marg_mask
+            utils_vgg16.heatmap(covlrp_exp_marg_img, 20,20, save_path= os.path.join(img_exp_dir_path, "covlrp_marg_exp.png"))
+
+            covgi_exp_diag_img = np.nan_to_num(np.array(covgi_diag.cpu(), dtype = np.float32))
+            covgi_diag_mask = ( covgi_exp_diag_img * mask_img_att).sum()
+            density_exp_dict["covgi_diag_exp"].setdefault(img_att_name, 0)
+            density_exp_dict["covgi_diag_exp"][img_att_name] += covgi_diag_mask
+            covgi_diag_acc -= covgi_diag_mask
+            utils_vgg16.heatmap(covgi_exp_diag_img, 20,20, save_path= os.path.join(img_exp_dir_path, "covgi_diag_exp.png"))
+
+            covgi_exp_marg_img = np.nan_to_num(np.array(covgi_marg.cpu(), dtype = np.float32)) 
+            covgi_marg_mask = (covgi_exp_marg_img * mask_img_att).sum()
+            density_exp_dict["covgi_marg_exp"].setdefault(img_att_name, 0)
+            density_exp_dict["covgi_marg_exp"][img_att_name] += covgi_marg_mask
+            covgi_marg_acc -= covgi_marg_mask
+            utils_vgg16.heatmap(covgi_exp_marg_img, 20,20, save_path= os.path.join(img_exp_dir_path, "covgi_marg_exp.png"))
+
+        
+        density_exp_dict["lrp_exp"]["background"] = lrp_acc
+        density_exp_dict["gi_exp"]["background"] = gi_acc
+        density_exp_dict["covlrp_diag_exp"]["background"] = covlrp_diag_acc
+        density_exp_dict["covlrp_marg_exp"]["background"] = covlrp_marg_acc
+        density_exp_dict["covgi_diag_exp"]["background"] = covgi_diag_acc
+        density_exp_dict["covgi_marg_exp"]["background"] = covgi_marg_acc
+
+    
+    with open(log_file_2, 'w') as log_file: 
+
+        for exp_name, atts_dict in density_exp_dict.items():
+            log_file.write(exp_name + ":\n\n")
+            sum_atts = sum(list(atts_dict.values()))
+            for att_name, att_value in atts_dict.items():
+                log_file.write(f"{att_name}: {att_value/sum_atts}\n")
+
+            log_file.write("\n\n\n")
+        
+
+def plot_exp_bar():
+    # simple
+
+    # x_labels= ["Eyeglasses", "Eyes", "Eyebrows", "Mouth", "Nose", "Hair", "Neck", "Ears", "Skin", "Clothes"]
+    # y_values_lrp = [13.54, 3.34, 2.23, 9.6, 5.4, 18.2, 12.2, 0,  15.2, 20.42]
+    # y_values_gi =  [30.54, 1.66, 1.24, 5.6, 4.3, 6.8, 25.56, 6.32, 18.23, 0]
+    # y_values_covlrp_diag = [27.54, 3.56, 2.54, 4.7, 3.4, 18.45, 7.2, 6.3, 20.23, 6.23]
+    # y_values_covlrp_marg = [25.54, 4.56, 3.21, 3.23, 3.56, 30.64, 5.4, 12.3, 0, 11.54]
+    # y_values_covgi_diag = [18.9, 2.56, 3.6, 3.8, 3.1, 20.6, 4.1, 3.1, 24.3, 16.2]
+    # y_values_covgi_marg  = [24.3, 2.3, 2.1, 4.2, 4.3, 17.3, 6.7, 5.3, 23.2, 10.2]
+
+    # plt.bar(x_labels, y_values_covgi_marg, color = "slateblue")
+    # plt.xticks(rotation=90, fontsize=15)
+    # plt.xlabel('Visual Features', fontsize=20)
+    # plt.ylabel('Uncertainty [%]', fontsize=20)  
+    # ax = plt.gca()
+    # labels = ax.get_xticklabels()
+    # labels[0].set_fontweight('bold') 
+    # plt.tight_layout()
+    # plt.show()
+
+    # density
+
+    x_labels= ["Eyeglasses", "Eyes", "Eyebrows", "Mouth", "Nose", "Hair", "Neck", "Ears", "Skin", "Clothes"]
+
+    y_values_lrp = [25.6, 3.4,  2.1, 2.9, 1.2, 15.3, 16.2, 1.6, 16.2, 15.5]
+    y_values_gi =  [42.54, 4.66, 5.6, 4.6, 4.3, 12.3, 0, 6.32, 12.3, 7.3]
+    y_values_covlrp_diag = [22.6, 3.26, 3.34, 5.2, 6.3, 14.2, 3.3, 2.3, 20.4, 19.24]
+    y_values_covlrp_marg = [40.04, 4.2, 5.2, 2.3, 6.4,0, 3.3, 5.5, 20.56, 12.3]
+    y_values_covgi_diag = [25.6, 3.48, 5.6, 4.3, 6.4, 10.3, 4.5, 3.1, 29.5, 7.3]
+    y_values_covgi_marg= [18.6, 3.2, 12.3, 6.6, 8.2, 28.3, 5.2, 11.4, 0, 6.2]
+
+
+    plt.bar(x_labels, y_values_covgi_marg, color = "indianred")
+    plt.xticks(rotation=90, fontsize=15)
+    plt.xlabel('Visual Features', fontsize=20)
+    plt.ylabel('Uncertainty [%]', fontsize=20)  
+    ax = plt.gca()
+    labels = ax.get_xticklabels()
+    labels[0].set_fontweight('bold') 
+    plt.tight_layout()
+    plt.show()
+ 
+
+
+
+
+    # img_path = "datasets_face/CelebAMask-HQ/CelebA-Eye-G/4460_atts/4460.jpg"
+    # image = Image.open(img_path).convert('RGB')
+    # x = data_transforms(image).unsqueeze(0).to(device)
+
+
+    # lrp_rel = lrp_vgg16_simple_deep_ensembles(models_simple, x)
+    # utils_vgg16.heatmap(np.array(lrp_rel.cpu(), dtype = np.float32),20,20)
+    # gi_rel = gi_vgg16_simple_deep_ensembles(models_simple, x)
+    # utils_vgg16.heatmap(np.array(gi_rel.cpu(), dtype = np.float32),20,20)
+    # covlrp_diag, covlrp_marg = covlrp_vgg16_simple_deep_ensembles(models_simple, x)
+    # utils_vgg16.heatmap(np.array(covlrp_diag.cpu(), dtype = np.float32),20,20)
+    # utils_vgg16.heatmap(np.array(covlrp_marg.cpu(), dtype = np.float32),20,20)
+    # covgi_diag, covgi_marg = covgi_vgg16_simple_deep_ensembles(models_simple, x)
+    # utils_vgg16.heatmap(np.array(covgi_diag.cpu(), dtype = np.float32),20,20)
+    # utils_vgg16.heatmap(np.array(covgi_marg.cpu(), dtype = np.float32),20,20)
+
+
+
+    
+
+
+
+    # lrp_rel = lrp_vgg16_density_deep_ensembles(models_density, x)
+    # utils_vgg16.heatmap(np.array(lrp_rel.cpu(), dtype = np.float32),20,20)
+    # gi_rel = gi_vgg16_density_deep_ensembles(models_density, x)
+    # utils_vgg16.heatmap(np.array(gi_rel.cpu(), dtype = np.float32),20,20)
+    # covlrp_diag, covlrp_marg = covlrp_vgg16_density_deep_ensembles(models_density, x)
+    # utils_vgg16.heatmap(np.array(covlrp_diag.cpu(), dtype = np.float32),20,20)
+    # utils_vgg16.heatmap(np.array(covlrp_marg.cpu(), dtype = np.float32),20,20)
+
+    # covgi_diag, covgi_marg = covgi_vgg16_density_deep_ensembles(models_density, x)
+    # utils_vgg16.heatmap(np.array(covgi_diag.cpu(), dtype = np.float32),20,20)
+    # utils_vgg16.heatmap(np.array(covgi_marg.cpu(), dtype = np.float32),20,20)
+
+# 1151
+
                 
+def main():
 
+    plot_exp_bar()
 
-make_plot_ml_vs_nll()
+if __name__ == '__main__':
+    main()
